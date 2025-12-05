@@ -3602,9 +3602,10 @@
                          (icon-component/icon-picker icon
                                                      {:on-chosen (fn [_e icon]
                                                                    (if icon
-                                                                     (let [icon-keys (if (= "text" (:type icon))
-                                                                                      [:type :value]
-                                                                                      [:id :type :color])]
+                                                                     (let [icon-keys (cond
+                                                                                      (= "text" (:type icon)) [:type :value]
+                                                                                      (= "avatar" (:type icon)) [:type :value :backgroundColor :color]
+                                                                                      :else [:id :type :color])]
                                                                        (db-property-handler/set-block-property!
                                                                         (:db/id block)
                                                                         (pu/get-pid :logseq.property/icon)

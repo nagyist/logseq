@@ -103,9 +103,10 @@
         on-chosen! (fn [_e icon]
                      (let [repo (state/get-current-repo)
                            blocks (get-operating-blocks block)
-                           icon-keys (if (= "text" (:type icon))
-                                      [:type :value]
-                                      [:type :id :color])]
+                           icon-keys (cond
+                                      (= "text" (:type icon)) [:type :value]
+                                      (= "avatar" (:type icon)) [:type :value :backgroundColor :color]
+                                      :else [:type :id :color])]
                        (property-handler/batch-set-block-property!
                         repo
                         (map :db/id blocks)

@@ -4,6 +4,7 @@
             [camel-snake-kebab.core :as csk]
             [cljs-bean.core :as bean]
             [clojure.string :as string]
+            [frontend.colors :as colors]
             [frontend.config :as config]
             [frontend.db :as db]
             [frontend.handler.property.util :as pu]
@@ -47,6 +48,20 @@
                                     (subs text-value 0 8)
                                     text-value)]
                  [:span.text-sm.font-medium display-text])
+               
+               (and (map? normalized) (= :avatar (:type normalized)) (get-in normalized [:data :value]))
+               (let [avatar-value (get-in normalized [:data :value])
+                     backgroundColor (or (get-in normalized [:data :backgroundColor])
+                                        (colors/variable :indigo :09))
+                     color (or (get-in normalized [:data :color])
+                              (colors/variable :indigo :10 true))
+                     display-text (subs avatar-value 0 (min 3 (count avatar-value)))]
+                 [:span.inline-flex.items-center.justify-center.w-9.h-9.rounded-full.text-sm.font-medium
+                  {:style {:backgroundColor backgroundColor
+                           :color color
+                           :min-width "2.25rem"
+                           :min-height "2.25rem"}}
+                  display-text])
                
                ;; Legacy format support (fallback if normalization failed)
                (and (map? icon') (= :emoji (:type icon')) (:id icon'))
@@ -164,6 +179,16 @@
                :id (or id (str "text-" value))
                :label (or label value)
                :data {:value value}}
+        :avatar (let [backgroundColor (or (:backgroundColor v)
+                                         (colors/variable :indigo :09))
+                     color (or (:color v)
+                              (colors/variable :indigo :10 true))]
+                 {:type :avatar
+                  :id (or id (str "avatar-" value))
+                  :label (or label value)
+                  :data {:value value
+                         :backgroundColor backgroundColor
+                         :color color}})
         ;; Fallback: try to guess from value
         (or (guess-from-value v)
             {:type :icon
@@ -294,6 +319,33 @@
               :on-mouse-out #()))
      display-text]))
 
+(rum/defc avatar-cp < rum/static
+  [icon-item {:keys [on-chosen hover]}]
+  (let [avatar-value (get-in icon-item [:data :value])
+        backgroundColor (or (get-in icon-item [:data :backgroundColor])
+                           (colors/variable :indigo :09))
+        color (or (get-in icon-item [:data :color])
+                 (colors/variable :indigo :10 true))
+        display-text (subs avatar-value 0 (min 3 (count avatar-value)))]
+    [:button.w-9.h-9.rounded-full.transition-opacity.text-sm.font-medium.flex.items-center.justify-center
+     (cond->
+      {:tabIndex "0"
+       :title avatar-value
+       :style {:backgroundColor backgroundColor
+               :color color}
+       :on-click (fn [e]
+                   (on-chosen e {:type "avatar"
+                                 :value avatar-value
+                                 :backgroundColor backgroundColor
+                                 :color color}))}
+       (not (nil? hover))
+       (assoc :on-mouse-over #(reset! hover {:type :avatar
+                                             :value avatar-value
+                                             :backgroundColor backgroundColor
+                                             :color color})
+              :on-mouse-out #()))
+     display-text]))
+
 (defn render-item
   "Render an icon-item based on its type"
   [icon-item opts]
@@ -301,7 +353,7 @@
     :emoji (emoji-cp icon-item opts)
     :icon (icon-cp icon-item opts)
     :text (text-cp icon-item opts)
-    :avatar (icon-cp icon-item opts) ; placeholder for future
+    :avatar (avatar-cp icon-item opts)
     nil))
 
 (defn item-render
@@ -413,6 +465,19 @@
                      (subs (first words) 0 (min 2 (count (first words)))))]
       (subs initials 0 (min 8 (count initials))))))
 
+(defn- derive-avatar-initials
+  "Derive initials from a page title (max 2-3 chars for avatars)"
+  [title]
+  (when title
+    (let [words (string/split (string/trim title) #"\s+")
+          initials (if (> (count words) 1)
+                     ;; Take first letter of first two words
+                     (str (subs (first words) 0 1)
+                          (subs (second words) 0 1))
+                     ;; Single word: take first 2-3 chars
+                     (subs (first words) 0 (min 3 (count (first words)))))]
+      (subs initials 0 (min 3 (count initials))))))
+
 (rum/defc text-tab-cp
   [*q page-title opts]
   (let [query @*q
@@ -435,6 +500,33 @@
       [:div.pane-section.px-2.py-4
        [:div.text-sm.text-gray-07.dark:opacity-80
         "Enter text or use page initials"]])))
+
+(rum/defc avatar-tab-cp
+  [*q page-title opts]
+  (let [query @*q
+        avatar-value (if (string/blank? query)
+                       ;; Use page-title or fallback to current page
+                       (let [title (or page-title
+                                       (some-> (state/get-current-page)
+                                               (db/get-page)
+                                               (:block/title)))]
+                         (derive-avatar-initials title))
+                       ;; Use query (max 2-3 chars)
+                       (subs query 0 (min 3 (count query))))
+        backgroundColor (colors/variable :indigo :09)
+        color (colors/variable :indigo :10 true)
+        icon-item (when avatar-value
+                    {:type :avatar
+                     :id (str "avatar-" avatar-value)
+                     :label avatar-value
+                     :data {:value avatar-value
+                            :backgroundColor backgroundColor
+                            :color color}})]
+    (if icon-item
+      (pane-section "Avatar" [icon-item] (assoc opts :virtual-list? false))
+      [:div.pane-section.px-2.py-4
+       [:div.text-sm.text-gray-07.dark:opacity-80
+        "Enter initials or use page initials"]])))
 
 (rum/defc all-cp
   [opts]
@@ -579,9 +671,20 @@
                     :on-chosen (fn [e m]
                                  (let [icon-item (normalize-icon m)
                                        icon? (= :icon (:type icon-item))
-                                       m' (if (and icon? (not (string/blank? @*color)))
+                                       avatar? (= :avatar (:type icon-item))
+                                       m' (cond
+                                            (and icon? (not (string/blank? @*color)))
                                             (assoc-in m [:data :color] @*color)
-                                            m)]
+                                            avatar?
+                                            ;; Ensure avatar has default colors if not provided
+                                            (let [m-normalized (normalize-icon m)]
+                                              (if (and (get-in m-normalized [:data :backgroundColor])
+                                                       (get-in m-normalized [:data :color]))
+                                                m
+                                                (assoc m
+                                                       :backgroundColor (get-in m-normalized [:data :backgroundColor] (colors/variable :indigo :09))
+                                                       :color (get-in m-normalized [:data :color] (colors/variable :indigo :10 true)))))
+                                            :else m)]
                                    (and on-chosen (on-chosen e m'))
                                    (when (:type icon-item) (add-used-item! icon-item)))))
         *select-mode? (::select-mode? state)
@@ -652,6 +755,7 @@
             :emoji (emojis-cp emojis opts)
             :icon (icons-cp (get-tabler-icons) opts)
             :text (text-tab-cp *q page-title opts)
+            :avatar (avatar-tab-cp *q page-title opts)
             (all-cp opts))])]]
 
      ;; footer
@@ -659,7 +763,7 @@
       ;; tabs
       [:<>
        [:div.flex.flex-1.flex-row.items-center.gap-2
-        (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:text "Text"]]]
+        (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:text "Text"] [:avatar "Avatar"]]]
           (for [[id label] tabs
                 :let [active? (= @*tab id)]]
             (shui/button
@@ -671,7 +775,7 @@
                                (reset! *tab id))}
              label)))]
 
-       (when (and (not= :emoji @*tab) (not= :text @*tab))
+       (when (and (not= :emoji @*tab) (not= :text @*tab) (not= :avatar @*tab))
          (color-picker *color (fn [c]
                                 (when (= :icon (:type normalized-icon-value))
                                   (on-chosen nil (assoc-in normalized-icon-value [:data :color] c) true)))))

@@ -306,9 +306,10 @@
                           (db-property-handler/delete-closed-value! (:db/id property) (:db/id block))
                           (re-init-commands! property)))
         update-icon! (fn [icon]
-                       (let [icon-keys (if (= "text" (:type icon))
-                                        [:type :value]
-                                        [:id :type :color])]
+                       (let [icon-keys (cond
+                                        (= "text" (:type icon)) [:type :value]
+                                        (= "avatar" (:type icon)) [:type :value :backgroundColor :color]
+                                        :else [:id :type :color])]
                          (property-handler/set-block-property!
                           (state/get-current-repo) (:block/uuid block) :logseq.property/icon
                           (select-keys icon icon-keys))))
