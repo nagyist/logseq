@@ -102,12 +102,15 @@
                          (shui/popup-hide-all!))
         on-chosen! (fn [_e icon]
                      (let [repo (state/get-current-repo)
-                           blocks (get-operating-blocks block)]
+                           blocks (get-operating-blocks block)
+                           icon-keys (if (= "text" (:type icon))
+                                      [:type :value]
+                                      [:type :id :color])]
                        (property-handler/batch-set-block-property!
                         repo
                         (map :db/id blocks)
                         :logseq.property/icon
-                        (when icon (select-keys icon [:type :id :color]))))
+                        (when icon (select-keys icon icon-keys))))
                      (clear-overlay!)
                      (when editing?
                        (editor-handler/restore-last-saved-cursor!)))]

@@ -3602,10 +3602,13 @@
                          (icon-component/icon-picker icon
                                                      {:on-chosen (fn [_e icon]
                                                                    (if icon
-                                                                     (db-property-handler/set-block-property!
-                                                                      (:db/id block)
-                                                                      (pu/get-pid :logseq.property/icon)
-                                                                      (select-keys icon [:id :type :color]))
+                                                                     (let [icon-keys (if (= "text" (:type icon))
+                                                                                      [:type :value]
+                                                                                      [:id :type :color])]
+                                                                       (db-property-handler/set-block-property!
+                                                                        (:db/id block)
+                                                                        (pu/get-pid :logseq.property/icon)
+                                                                        (select-keys icon icon-keys)))
                                                              ;; del
                                                                      (db-property-handler/remove-block-property!
                                                                       (:db/id block)

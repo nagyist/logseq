@@ -5,8 +5,10 @@
             [cljs-bean.core :as bean]
             [clojure.string :as string]
             [frontend.config :as config]
+            [frontend.db :as db]
             [frontend.handler.property.util :as pu]
             [frontend.search :as search]
+            [frontend.state :as state]
             [frontend.storage :as storage]
             [frontend.ui :as ui]
             [frontend.util :as util]
@@ -21,25 +23,49 @@
 
 (defonce emojis (vals (bean/->clj (gobj/get emoji-data "emojis"))))
 
+(declare normalize-icon)
+
 (defn icon
   [icon' & [opts]]
-  (let [icon' (if (or (string? icon') (keyword? icon'))
-                {:type :tabler-icon :id (name icon')} icon')
+  (let [normalized (or (normalize-icon icon') icon')
         color? (:color? opts)
         opts (dissoc opts :color?)
         item (cond
-               (and (= :emoji (:type icon')) (:id icon'))
+               ;; Unified shape format
+               (and (map? normalized) (= :emoji (:type normalized)) (get-in normalized [:data :value]))
+               [:span.ui__icon
+                [:em-emoji (merge {:id (get-in normalized [:data :value])
+                                   :style {:line-height 1}}
+                                  opts)]]
+               
+               (and (map? normalized) (= :icon (:type normalized)) (get-in normalized [:data :value]))
+               (ui/icon (get-in normalized [:data :value]) opts)
+               
+               (and (map? normalized) (= :text (:type normalized)) (get-in normalized [:data :value]))
+               (let [text-value (get-in normalized [:data :value])
+                     display-text (if (> (count text-value) 8)
+                                    (subs text-value 0 8)
+                                    text-value)]
+                 [:span.text-sm.font-medium display-text])
+               
+               ;; Legacy format support (fallback if normalization failed)
+               (and (map? icon') (= :emoji (:type icon')) (:id icon'))
                [:span.ui__icon
                 [:em-emoji (merge {:id (:id icon')
                                    :style {:line-height 1}}
                                   opts)]]
 
-               (and (= :tabler-icon (:type icon')) (:id icon'))
-               (ui/icon (:id icon') opts))]
-    (if color?
-      [:span.inline-flex.items-center.ls-icon-color-wrap
-       {:style {:color (or (some-> icon' :color) "inherit")}} item]
-      item)))
+               (and (map? icon') (= :tabler-icon (:type icon')) (:id icon'))
+               (ui/icon (:id icon') opts)
+               
+               :else nil)]
+    (when item
+      (if color?
+        [:span.inline-flex.items-center.ls-icon-color-wrap
+         {:style {:color (or (get-in normalized [:data :color])
+                            (some-> icon' :color)
+                            "inherit")}} item]
+        item))))
 
 (defn get-node-icon
   [node-entity]
@@ -78,10 +104,96 @@
               (select-keys opts [:class]))
        (icon node-icon opts')])))
 
+(defn- emoji-char?
+  "Check if a string is a single emoji character by checking against known emojis"
+  [s]
+  (and (string? s)
+       (not (string/blank? s))
+       (<= (count s) 2) ; emojis are typically 1-2 code units
+       (some #(= (:id %) s) emojis)))
+
+(defn- guess-from-value
+  "Attempt to guess icon type from map value when type is unknown"
+  [m]
+  (let [value (or (:value m) (:id m))]
+    (when (string? value)
+      (if (emoji-char? value)
+        {:type :emoji
+         :id (str "emoji-" value)
+         :label value
+         :data {:value value}}
+        {:type :icon
+         :id (str "icon-" value)
+         :label value
+         :data {:value value}}))))
+
+(defn normalize-icon
+  "Convert various icon formats to unified icon-item shape:
+   {:id string, :type :emoji|:icon|:text|:avatar, :label string, :data {:value string, :color string (optional), :backgroundColor string (optional)}}"
+  [v]
+  (cond
+    ;; Already unified shape? (has :data key)
+    (and (map? v) (keyword? (:type v)) (contains? v :data)) v
+
+    ;; Legacy map with :type
+    (map? v)
+    (let [type-kw (cond
+                    (keyword? (:type v)) (:type v)
+                    (string? (:type v)) (keyword (:type v))
+                    :else nil)
+          id (or (:id v) (:value v))
+          value (or (:value v) (:id v))
+          color (:color v)
+          label (or (:name v) (:label v) value)]
+      (case type-kw
+        :emoji {:type :emoji
+                :id (or id (str "emoji-" value))
+                :label (or label value)
+                :data {:value value}}
+        :tabler-icon {:type :icon
+                      :id (or id (str "icon-" value))
+                      :label (or label value)
+                      :data (cond-> {:value value}
+                              color (assoc :color color))}
+        :icon {:type :icon
+               :id (or id (str "icon-" value))
+               :label (or label value)
+               :data (cond-> {:value value}
+                       color (assoc :color color))}
+        :text {:type :text
+               :id (or id (str "text-" value))
+               :label (or label value)
+               :data {:value value}}
+        ;; Fallback: try to guess from value
+        (or (guess-from-value v)
+            {:type :icon
+             :id (str "icon-" (or value "unknown"))
+             :label (or label value "unknown")
+             :data {:value (or value "")}})))
+
+    ;; Plain string: detect emoji vs icon name
+    (string? v)
+    (if (emoji-char? v)
+      {:type :emoji
+       :id (str "emoji-" v)
+       :label v
+       :data {:value v}}
+      {:type :icon
+       :id (str "icon-" v)
+       :label v
+       :data {:value v}})
+
+    :else nil))
+
 (defn- search-emojis
   [q]
   (p/let [result (.search SearchIndex q)]
-    (bean/->clj result)))
+    (->> (bean/->clj result)
+         (map (fn [emoji]
+                {:type :emoji
+                 :id (:id emoji)
+                 :label (or (:name emoji) (:id emoji))
+                 :data {:value (:id emoji)}})))))
 
 (defonce *tabler-icons (atom nil))
 (defn- get-tabler-icons
@@ -99,7 +211,12 @@
 
 (defn- search-tabler-icons
   [q]
-  (search/fuzzy-search (get-tabler-icons) q :limit 100))
+  (->> (search/fuzzy-search (get-tabler-icons) q :limit 100)
+       (map (fn [icon-name]
+              {:type :icon
+               :id (str "icon-" icon-name)
+               :label icon-name
+               :data {:value icon-name}}))))
 
 (defn- search
   [q tab]
@@ -113,50 +230,96 @@
   [:div.its.icons-row items])
 
 (rum/defc icon-cp < rum/static
-  [icon' {:keys [on-chosen hover]}]
-  [:button.w-9.h-9.transition-opacity
-   (when-let [icon' (cond-> icon' (string? icon') (string/replace " " ""))]
-     {:key icon'
-      :tabIndex "0"
-      :title icon'
-      :on-click (fn [e]
-                  (on-chosen e {:type :tabler-icon
-                                :id icon'
-                                :name icon'}))
-      :on-mouse-over #(some-> hover
-                              (reset! {:type :tabler-icon
-                                       :id icon'
-                                       :name icon'
-                                       :icon icon'}))
-      :on-mouse-out #()})
-   (ui/icon icon' {:size 24})])
+  [icon-item {:keys [on-chosen hover]}]
+  (let [icon-id (get-in icon-item [:data :value])
+        icon-name (or (:label icon-item) icon-id)
+        color (get-in icon-item [:data :color])
+        icon-id' (when icon-id (cond-> icon-id (string? icon-id) (string/replace " " "")))]
+    [:button.w-9.h-9.transition-opacity
+     (when icon-id'
+       {:key icon-id'
+        :tabIndex "0"
+        :title icon-name
+        :on-click (fn [e]
+                    (on-chosen e {:type :tabler-icon
+                                  :id icon-id'
+                                  :name icon-name
+                                  :color color}))
+        :on-mouse-over #(some-> hover
+                                (reset! {:type :tabler-icon
+                                         :id icon-id'
+                                         :name icon-name
+                                         :icon icon-id'
+                                         :color color}))
+        :on-mouse-out #()})
+     (when icon-id'
+       (ui/icon icon-id' {:size 24}))]))
 
 (rum/defc emoji-cp < rum/static
-  [{:keys [id name] :as emoji} {:keys [on-chosen hover]}]
-  [:button.text-2xl.w-9.h-9.transition-opacity
-   (cond->
-    {:tabIndex "0"
-     :title name
-     :on-click (fn [e]
-                 (on-chosen e (assoc emoji :type :emoji)))}
-     (not (nil? hover))
-     (assoc :on-mouse-over #(reset! hover emoji)
-            :on-mouse-out #()))
-   [:em-emoji {:id id
-               :style {:line-height 1}}]])
+  [icon-item {:keys [on-chosen hover]}]
+  (let [emoji-id (get-in icon-item [:data :value])
+        emoji-name (or (:label icon-item) emoji-id)]
+    [:button.text-2xl.w-9.h-9.transition-opacity
+     (cond->
+      {:tabIndex "0"
+       :title emoji-name
+       :on-click (fn [e]
+                   (on-chosen e {:type :emoji
+                                 :id emoji-id
+                                 :name emoji-name}))}
+       (not (nil? hover))
+       (assoc :on-mouse-over #(reset! hover {:type :emoji
+                                             :id emoji-id
+                                             :name emoji-name})
+              :on-mouse-out #()))
+     [:em-emoji {:id emoji-id
+                 :style {:line-height 1}}]]))
+
+(rum/defc text-cp < rum/static
+  [icon-item {:keys [on-chosen hover]}]
+  (let [text-value (get-in icon-item [:data :value])
+        display-text (if (> (count text-value) 8)
+                       (subs text-value 0 8)
+                       text-value)]
+    [:button.w-9.h-9.transition-opacity.text-sm.font-medium
+     (cond->
+      {:tabIndex "0"
+       :title text-value
+       :on-click (fn [e]
+                   (on-chosen e {:type "text"
+                                 :value text-value}))}
+       (not (nil? hover))
+       (assoc :on-mouse-over #(reset! hover {:type :text
+                                             :value text-value})
+              :on-mouse-out #()))
+     display-text]))
+
+(defn render-item
+  "Render an icon-item based on its type"
+  [icon-item opts]
+  (case (:type icon-item)
+    :emoji (emoji-cp icon-item opts)
+    :icon (icon-cp icon-item opts)
+    :text (text-cp icon-item opts)
+    :avatar (icon-cp icon-item opts) ; placeholder for future
+    nil))
 
 (defn item-render
   [item opts]
-  (if (or (string? item)
-          (= :tabler-icon (:type item)))
-    (icon-cp (if (string? item) item (:id item)) opts)
-    (emoji-cp item opts)))
+  (if (map? item)
+    (render-item item opts)
+    ;; Legacy support: handle raw strings/old formats
+    (let [normalized (normalize-icon item)]
+      (if normalized
+        (render-item normalized opts)
+        nil))))
 
 (rum/defc pane-section
-  [label items & {:keys [searching? virtual-list?]
-                  :or {virtual-list? true}
-                  :as opts}]
-  (let [*el-ref (rum/use-ref nil)]
+  [label icon-items & {:keys [searching? virtual-list? render-item-fn]
+                       :or {virtual-list? true}
+                       :as opts}]
+  (let [*el-ref (rum/use-ref nil)
+        render-fn (or render-item-fn render-item)]
     [:div.pane-section
      {:ref *el-ref
       :class (util/classnames
@@ -165,12 +328,12 @@
      [:div.hd.px-1.pb-1.leading-none
       [:strong.text-xs.font-medium.text-gray-07.dark:opacity-80 label]]
      (if virtual-list?
-       (let [total (count items)
+       (let [total (count icon-items)
              step 9
              rows (quot total step)
              mods (mod total step)
              rows (if (zero? mods) rows (inc rows))
-             items (vec items)]
+             items (vec icon-items)]
          (ui/virtualized-list
           (cond-> {:total-count rows
                    :item-content (fn [idx]
@@ -182,47 +345,115 @@
                                                      (catch js/Error e
                                                        (js/console.error e)
                                                        nil))]
-                                      (mapv #(item-render % opts) icons))))}
+                                      (mapv #(render-fn % opts) icons))))}
 
             searching?
             (assoc :custom-scroll-parent (some-> (rum/deref *el-ref) (.closest ".bd-scroll"))))))
        [:div.its
-        (map #(item-render % opts) items)])]))
+        (map #(render-fn % opts) icon-items)])]))
 
 (rum/defc emojis-cp < rum/static
   [emojis* opts]
-  (pane-section
-   (util/format "Emojis (%s)" (count emojis*))
-   emojis*
-   opts))
+  (let [icon-items (map (fn [emoji]
+                          {:type :emoji
+                           :id (:id emoji)
+                           :label (or (:name emoji) (:id emoji))
+                           :data {:value (:id emoji)}})
+                        emojis*)]
+    (pane-section
+     (util/format "Emojis (%s)" (count emojis*))
+     icon-items
+     opts)))
 
 (rum/defc icons-cp < rum/static
   [icons opts]
-  (pane-section
-   (util/format "Icons (%s)" (count icons))
-   icons
-   opts))
+  (let [icon-items (map (fn [icon-name]
+                          {:type :icon
+                           :id (str "icon-" icon-name)
+                           :label icon-name
+                           :data {:value icon-name}})
+                        icons)]
+    (pane-section
+     (util/format "Icons (%s)" (count icons))
+     icon-items
+     opts)))
 
 (defn get-used-items
   []
-  (storage/get :ui/ls-icons-used))
+  (let [v2-items (storage/get :ui/ls-icons-used-v2)]
+    (if (seq v2-items)
+      v2-items
+      ;; Migrate from legacy format
+      (let [legacy-items (storage/get :ui/ls-icons-used)]
+        (if (seq legacy-items)
+          (let [normalized (map normalize-icon legacy-items)]
+            (storage/set :ui/ls-icons-used-v2 normalized)
+            normalized)
+          [])))))
 
 (defn add-used-item!
   [m]
-  (let [s (some->> (or (get-used-items) [])
+  (let [normalized (normalize-icon m)
+        s (some->> (or (get-used-items) [])
                    (take 24)
-                   (filter #(not= m %))
-                   (cons m))]
-    (storage/set :ui/ls-icons-used s)))
+                   (filter #(not= normalized %))
+                   (cons normalized))]
+    (storage/set :ui/ls-icons-used-v2 s)))
+
+(defn- derive-initials
+  "Derive initials from a page title (max 8 chars)"
+  [title]
+  (when title
+    (let [words (string/split (string/trim title) #"\s+")
+          initials (if (> (count words) 1)
+                     ;; Take first letter of first two words
+                     (str (subs (first words) 0 1)
+                          (subs (second words) 0 1))
+                     ;; Single word: take first 2 chars
+                     (subs (first words) 0 (min 2 (count (first words)))))]
+      (subs initials 0 (min 8 (count initials))))))
+
+(rum/defc text-tab-cp
+  [*q page-title opts]
+  (let [query @*q
+        text-value (if (string/blank? query)
+                     ;; Use page-title or fallback to current page
+                     (let [title (or page-title
+                                     (some-> (state/get-current-page)
+                                             (db/get-page)
+                                             (:block/title)))]
+                       (derive-initials title))
+                     ;; Use query (max 8 chars)
+                     (subs query 0 (min 8 (count query))))
+        icon-item (when text-value
+                    {:type :text
+                     :id (str "text-" text-value)
+                     :label text-value
+                     :data {:value text-value}})]
+    (if icon-item
+      (pane-section "Text" [icon-item] (assoc opts :virtual-list? false))
+      [:div.pane-section.px-2.py-4
+       [:div.text-sm.text-gray-07.dark:opacity-80
+        "Enter text or use page initials"]])))
 
 (rum/defc all-cp
   [opts]
   (let [used-items (get-used-items)
-        emoji-items (take 32 emojis)
-        icon-items (take 48 (get-tabler-icons))
+        emoji-items (->> (take 32 emojis)
+                         (map (fn [emoji]
+                                {:type :emoji
+                                 :id (:id emoji)
+                                 :label (or (:name emoji) (:id emoji))
+                                 :data {:value (:id emoji)}})))
+        icon-items (->> (take 48 (get-tabler-icons))
+                        (map (fn [icon-name]
+                               {:type :icon
+                                :id (str "icon-" icon-name)
+                                :label icon-name
+                                :data {:value icon-name}})))
         opts (assoc opts :virtual-list? false)]
     [:div.all-pane.pb-10
-     (when (count used-items)
+     (when (seq used-items)
        (pane-section "Frequently used" used-items opts))
      (pane-section (util/format "Emojis (%s)" (count emojis))
                    emoji-items
@@ -335,7 +566,7 @@
   (rum/local :all ::tab)
   {:init (fn [s]
            (assoc s ::color (atom (storage/get :ls-icon-color-preset))))}
-  [state {:keys [on-chosen del-btn? icon-value] :as opts}]
+  [state {:keys [on-chosen del-btn? icon-value page-title] :as opts}]
   (let [*q (::q state)
         *result (::result state)
         *tab (::tab state)
@@ -343,13 +574,16 @@
         *input-ref (rum/create-ref)
         *result-ref (rum/create-ref)
         result @*result
+        normalized-icon-value (normalize-icon icon-value)
         opts (assoc opts
                     :on-chosen (fn [e m]
-                                 (let [icon? (= (:type m) :tabler-icon)
-                                       m (if (and icon? (not (string/blank? @*color)))
-                                           (assoc m :color @*color) m)]
-                                   (and on-chosen (on-chosen e m))
-                                   (when (:type m) (add-used-item! m)))))
+                                 (let [icon-item (normalize-icon m)
+                                       icon? (= :icon (:type icon-item))
+                                       m' (if (and icon? (not (string/blank? @*color)))
+                                            (assoc-in m [:data :color] @*color)
+                                            m)]
+                                   (and on-chosen (on-chosen e m'))
+                                   (when (:type icon-item) (add-used-item! icon-item)))))
         *select-mode? (::select-mode? state)
         reset-q! #(when-let [^js input (rum/deref *input-ref)]
                     (reset! *q "")
@@ -417,6 +651,7 @@
           (case @*tab
             :emoji (emojis-cp emojis opts)
             :icon (icons-cp (get-tabler-icons) opts)
+            :text (text-tab-cp *q page-title opts)
             (all-cp opts))])]]
 
      ;; footer
@@ -424,7 +659,7 @@
       ;; tabs
       [:<>
        [:div.flex.flex-1.flex-row.items-center.gap-2
-        (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"]]]
+        (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:text "Text"]]]
           (for [[id label] tabs
                 :let [active? (= @*tab id)]]
             (shui/button
@@ -436,10 +671,10 @@
                                (reset! *tab id))}
              label)))]
 
-       (when (not= :emoji @*tab)
+       (when (and (not= :emoji @*tab) (not= :text @*tab))
          (color-picker *color (fn [c]
-                                (when (= :tabler-icon (some-> icon-value :type))
-                                  (on-chosen nil (assoc icon-value :color c) true)))))
+                                (when (= :icon (:type normalized-icon-value))
+                                  (on-chosen nil (assoc-in normalized-icon-value [:data :color] c) true)))))
 
        ;; action buttons
        (when del-btn?
@@ -448,8 +683,9 @@
                       (shui/tabler-icon "trash" {:size 17})))]]]))
 
 (rum/defc icon-picker
-  [icon-value {:keys [empty-label disabled? initial-open? del-btn? on-chosen icon-props popup-opts button-opts]}]
+  [icon-value {:keys [empty-label disabled? initial-open? del-btn? on-chosen icon-props popup-opts button-opts page-title]}]
   (let [*trigger-ref (rum/use-ref nil)
+        normalized-icon-value (normalize-icon icon-value)
         content-fn
         (if config/publishing?
           (constantly [])
@@ -458,7 +694,8 @@
              {:on-chosen (fn [e icon-value keep-popup?]
                            (on-chosen e icon-value)
                            (when-not (true? keep-popup?) (shui/popup-hide! id)))
-              :icon-value icon-value
+              :icon-value normalized-icon-value
+              :page-title page-title
               :del-btn? del-btn?})))]
     (hooks/use-effect!
      (fn []
@@ -486,7 +723,8 @@
                                           popup-opts))))}
         button-opts)
        (if has-icon?
-         (if (vector? icon-value)       ; hiccup
+         (if (vector? icon-value) ; hiccup
            icon-value
            (icon icon-value (merge {:color? true} icon-props)))
          (or empty-label "Empty"))))))
+
