@@ -355,7 +355,7 @@
      (when (seq favorite-entities)
        (let [favorite-items (map
                              (fn [e]
-                               (let [icon (icon/get-node-icon-cp e {:size 16})]
+                               (let [icon (icon/get-node-icon-cp e {:size 16 :color? true})]
                                  {:id (str (:db/id e))
                                   :value (:block/uuid e)
                                   :content [:li.favorite-item.font-medium (page-name e icon false)]}))
@@ -379,7 +379,7 @@
         [:li.recent-item.select-none.font-medium
          {:key (str "recent-" (:db/id page))
           :title (block-handler/block-unique-title page)}
-         (page-name page (icon/get-node-icon-cp page {:size 16}) true)])])))
+         (page-name page (icon/get-node-icon-cp page {:size 16 :color? true}) true)])])))
 
 (defn get-default-home-if-valid
   []

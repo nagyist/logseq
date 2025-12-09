@@ -103,7 +103,7 @@
                          (when entity
                            (if page?
                              [[:.flex.items-center.page-title.gap-1
-                               (icon/get-node-icon-cp entity {:class "text-md"})
+                               (icon/get-node-icon-cp entity {:class "text-md" :color? true})
                                [:span.overflow-hidden.text-ellipsis (:block/title entity)]]
                               (page-cp repo (str (:block/uuid entity)))]
                              (block-with-breadcrumb repo entity idx [repo db-id block-type] false))))]

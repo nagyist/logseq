@@ -3602,14 +3602,21 @@
                          (icon-component/icon-picker icon
                                                      {:on-chosen (fn [_e icon]
                                                                    (if icon
-                                                                     (let [icon-keys (cond
-                                                                                      (= "text" (:type icon)) [:type :value]
-                                                                                      (= "avatar" (:type icon)) [:type :value :backgroundColor :color]
-                                                                                      :else [:id :type :color])]
+                                                                     (let [icon-data (cond
+                                                                                       (= :text (:type icon))
+                                                                                       {:type :text :data (:data icon)}
+
+                                                                                       (= :avatar (:type icon))
+                                                                                       {:type :avatar :data (:data icon)}
+
+                                                                                       (= :icon (:type icon))
+                                                                                       {:type :icon :data (:data icon)}
+
+                                                                                       :else icon)]
                                                                        (db-property-handler/set-block-property!
                                                                         (:db/id block)
                                                                         (pu/get-pid :logseq.property/icon)
-                                                                        (select-keys icon icon-keys)))
+                                                                        icon-data))
                                                              ;; del
                                                                      (db-property-handler/remove-block-property!
                                                                       (:db/id block)

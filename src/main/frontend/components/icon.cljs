@@ -71,15 +71,17 @@
 
                (and (map? normalized) (= :text (:type normalized)) (get-in normalized [:data :value]))
                (let [text-value (get-in normalized [:data :value])
+                     text-color (get-in normalized [:data :color])
                      display-text (if (> (count text-value) 8)
                                     (subs text-value 0 8)
                                     text-value)]
                  [:span.ui__icon
                   [:span.text-sm.font-medium
-                   {:style {:max-width "20px"
-                            :overflow "hidden"
-                            :text-overflow "clip"
-                            :white-space "nowrap"}}
+                   {:style (cond-> {:max-width "20px"
+                                    :overflow "hidden"
+                                    :text-overflow "clip"
+                                    :white-space "nowrap"}
+                             text-color (assoc :color text-color))}
                    display-text]])
 
                (and (map? normalized) (= :avatar (:type normalized)) (get-in normalized [:data :value]))
@@ -218,7 +220,8 @@
         :text {:type :text
                :id (or id (str "text-" value))
                :label (or label value)
-               :data {:value value}}
+               :data (cond-> {:value value}
+                       color (assoc :color color))}
         :avatar (let [backgroundColor (or (:backgroundColor v)
                                           (colors/variable :indigo :09))
                       color (or (:color v)
@@ -306,16 +309,13 @@
         :tabIndex "0"
         :title icon-name
         :on-click (fn [e]
-                    (on-chosen e {:type :tabler-icon
-                                  :id icon-id'
-                                  :name icon-name
-                                  :color color}))
+                    (on-chosen e {:type :icon
+                                  :data {:value icon-id'
+                                         :color color}}))
         :on-mouse-over #(some-> hover
-                                (reset! {:type :tabler-icon
-                                         :id icon-id'
-                                         :name icon-name
-                                         :icon icon-id'
-                                         :color color}))
+                                (reset! {:type :icon
+                                         :data {:value icon-id'
+                                                :color color}}))
         :on-mouse-out #()})
      (when icon-id'
        (ui/icon icon-id' {:size 24}))]))
@@ -343,6 +343,7 @@
 (rum/defc text-cp < rum/static
   [icon-item {:keys [on-chosen hover]}]
   (let [text-value (get-in icon-item [:data :value])
+        text-color (get-in icon-item [:data :color])
         display-text (if (> (count text-value) 8)
                        (subs text-value 0 8)
                        text-value)]
@@ -351,11 +352,13 @@
       {:tabIndex "0"
        :title text-value
        :on-click (fn [e]
-                   (on-chosen e {:type "text"
-                                 :value text-value}))}
+                   (on-chosen e {:type :text
+                                 :data (cond-> {:value text-value}
+                                         text-color (assoc :color text-color))}))}
        (not (nil? hover))
        (assoc :on-mouse-over #(reset! hover {:type :text
-                                             :value text-value})
+                                             :data (cond-> {:value text-value}
+                                                     text-color (assoc :color text-color))})
               :on-mouse-out #()))
      display-text]))
 
@@ -374,15 +377,15 @@
        :title avatar-value
        :class "p-0 border-0 bg-transparent cursor-pointer"
        :on-click (fn [e]
-                   (on-chosen e {:type "avatar"
-                                 :value avatar-value
-                                 :backgroundColor backgroundColor
-                                 :color color}))}
+                   (on-chosen e {:type :avatar
+                                 :data {:value avatar-value
+                                        :backgroundColor backgroundColor
+                                        :color color}}))}
        (not (nil? hover))
        (assoc :on-mouse-over #(reset! hover {:type :avatar
-                                             :value avatar-value
-                                             :backgroundColor backgroundColor
-                                             :color color})
+                                             :data {:value avatar-value
+                                                    :backgroundColor backgroundColor
+                                                    :color color}})
               :on-mouse-out #()))
      (shui/avatar
       {:class "w-5 h-5"}
@@ -525,7 +528,7 @@
       (subs initials 0 (min 3 (count initials))))))
 
 (rum/defc text-tab-cp
-  [*q page-title opts]
+  [*q page-title *color opts]
   (let [query @*q
         text-value (if (string/blank? query)
                      ;; Use page-title or fallback to current page
@@ -536,11 +539,14 @@
                        (derive-initials title))
                      ;; Use query (max 8 chars)
                      (subs query 0 (min 8 (count query))))
+        ;; Include selected color if available
+        selected-color (when-not (string/blank? @*color) @*color)
         icon-item (when text-value
                     {:type :text
                      :id (str "text-" text-value)
                      :label text-value
-                     :data {:value text-value}})]
+                     :data (cond-> {:value text-value}
+                             selected-color (assoc :color selected-color))})]
     (if icon-item
       (pane-section "Text" [icon-item] (assoc opts :virtual-list? false))
       [:div.pane-section.px-2.py-4
@@ -548,7 +554,7 @@
         "Enter text or use page initials"]])))
 
 (rum/defc avatar-tab-cp
-  [*q page-title opts]
+  [*q page-title *color opts]
   (let [query @*q
         avatar-value (if (string/blank? query)
                        ;; Use page-title or fallback to current page
@@ -559,8 +565,10 @@
                          (derive-avatar-initials title))
                        ;; Use query (max 2-3 chars)
                        (subs query 0 (min 3 (count query))))
-        backgroundColor (colors/variable :indigo :09)
-        color (colors/variable :indigo :10 true)
+        ;; Use selected color if available, otherwise default to indigo
+        selected-color (when-not (string/blank? @*color) @*color)
+        backgroundColor (or selected-color (colors/variable :indigo :09))
+        color (or selected-color (colors/variable :indigo :10 true))
         icon-item (when avatar-value
                     {:type :avatar
                      :id (str "avatar-" avatar-value)
@@ -716,21 +724,20 @@
         opts (assoc opts
                     :on-chosen (fn [e m]
                                  (let [icon-item (normalize-icon m)
-                                       icon? (= :icon (:type icon-item))
-                                       avatar? (= :avatar (:type icon-item))
-                                       m' (cond
-                                            (and icon? (not (string/blank? @*color)))
-                                            (assoc-in m [:data :color] @*color)
-                                            avatar?
-                                            ;; Ensure avatar has default colors if not provided
-                                            (let [m-normalized (normalize-icon m)]
-                                              (if (and (get-in m-normalized [:data :backgroundColor])
-                                                       (get-in m-normalized [:data :color]))
-                                                m
-                                                (assoc m
-                                                       :backgroundColor (get-in m-normalized [:data :backgroundColor] (colors/variable :indigo :09))
-                                                       :color (get-in m-normalized [:data :color] (colors/variable :indigo :10 true)))))
-                                            :else m)]
+                                       can-have-color? (contains? #{:icon :avatar :text} (:type icon-item))
+                                       ;; Update color if user selected one from picker
+                                       m' (if (and can-have-color? (not (string/blank? @*color)))
+                                            (cond-> m
+                                              ;; For icons and text: set color
+                                              (or (= :icon (:type icon-item))
+                                                  (= :text (:type icon-item)))
+                                              (assoc-in [:data :color] @*color)
+
+                                              ;; For avatars: set both color (text) and backgroundColor
+                                              (= :avatar (:type icon-item))
+                                              (-> (assoc-in [:data :color] @*color)
+                                                  (assoc-in [:data :backgroundColor] @*color)))
+                                            m)]
                                    (and on-chosen (on-chosen e m'))
                                    (when (:type icon-item) (add-used-item! icon-item)))))
         *select-mode? (::select-mode? state)
@@ -800,8 +807,8 @@
           (case @*tab
             :emoji (emojis-cp emojis opts)
             :icon (icons-cp (get-tabler-icons) opts)
-            :text (text-tab-cp *q page-title opts)
-            :avatar (avatar-tab-cp *q page-title opts)
+            :text (text-tab-cp *q page-title *color opts)
+            :avatar (avatar-tab-cp *q page-title *color opts)
             (all-cp opts))])]]
 
      ;; footer
@@ -821,10 +828,17 @@
                                (reset! *tab id))}
              label)))]
 
-       (when (and (not= :emoji @*tab) (not= :text @*tab) (not= :avatar @*tab))
+       (when (and (not= :emoji @*tab) (not= :text @*tab))
          (color-picker *color (fn [c]
-                                (when (= :icon (:type normalized-icon-value))
-                                  (on-chosen nil (assoc-in normalized-icon-value [:data :color] c) true)))))
+                                (cond
+                                  (or (= :icon (:type normalized-icon-value))
+                                      (= :text (:type normalized-icon-value)))
+                                  (on-chosen nil (assoc-in normalized-icon-value [:data :color] c) true)
+
+                                  (= :avatar (:type normalized-icon-value))
+                                  (on-chosen nil (-> normalized-icon-value
+                                                     (assoc-in [:data :color] c)
+                                                     (assoc-in [:data :backgroundColor] c)) true)))))
 
        ;; action buttons
        (when del-btn?
