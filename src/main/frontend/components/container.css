@@ -120,6 +120,12 @@
     width: 20px;
     height: 20px;
     flex-shrink: 0;
+
+    /* Avatar font size in sidebar: 8px */
+    .avatar-fallback {
+      font-size: 8px !important;
+      font-weight: 500 !important;
+    }
   }
 
   .icon-cp-container {

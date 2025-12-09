@@ -91,12 +91,15 @@
                      color (or (get-in normalized [:data :color])
                                (colors/variable :indigo :10 true))
                      display-text (subs avatar-value 0 (min 3 (count avatar-value)))
-                     bg-color-rgba (convert-bg-color-to-rgba backgroundColor)]
+                     bg-color-rgba (convert-bg-color-to-rgba backgroundColor)
+                     ;; Determine font size based on context: sidebar (:size 16 = 8px) or page title (14px)
+                     font-size (if (= (:size opts) 16) "8px" "14px")]
                  (shui/avatar
                   {:class "w-5 h-5"}
                   (shui/avatar-fallback
                    {:style {:background-color bg-color-rgba
-                            :font-size "11px"
+                            :font-size font-size
+                            :font-weight "500"
                             :color color}}
                    display-text)))
 
@@ -371,7 +374,7 @@
                   (colors/variable :indigo :10 true))
         display-text (subs avatar-value 0 (min 3 (count avatar-value)))
         bg-color-rgba (convert-bg-color-to-rgba backgroundColor)]
-    [:button.transition-opacity
+    [:button.w-9.h-9.transition-opacity.flex.items-center.justify-center
      (cond->
       {:tabIndex "0"
        :title avatar-value
@@ -388,10 +391,11 @@
                                                     :color color}})
               :on-mouse-out #()))
      (shui/avatar
-      {:class "w-5 h-5"}
+      {:class "w-7 h-7"}
       (shui/avatar-fallback
        {:style {:background-color bg-color-rgba
-                :font-size "11px"
+                :font-size "12px"
+                :font-weight "500"
                 :color color}}
        display-text))]))
 
@@ -415,43 +419,86 @@
         (render-item normalized opts)
         nil))))
 
+;; Shared state for section expansion (persists during session)
+(defonce *section-states (atom {}))
+
+(rum/defc section-header
+  [{:keys [title count total-count expanded? keyboard-hint on-toggle input-focused?]}]
+  [:div.section-header.text-xs.py-1.5.px-3.flex.justify-between.items-center.gap-2.bg-gray-02.h-8
+   {:style {:color "var(--lx-gray-11)"}}
+   ;; Left: Title · total-count · Chevron
+   [:div.flex.items-center.gap-1.cursor-pointer.select-none
+    {:on-click on-toggle}
+    [:span.font-bold title]
+    (when (or total-count count)
+      [:<>
+       [:span "·"]
+       [:span {:style {:font-size "0.7rem"}}
+        (or total-count count)]])
+    (ui/icon (if expanded? "chevron-down" "chevron-right") {:size 14})]
+
+   [:div.flex-1] ; Spacer
+
+   ;; Right: Hide/Show with keyboard shortcut (fades out when input is focused)
+   (when keyboard-hint
+     [:div.flex.gap-1.items-center.text-xs.opacity-50.transition-all.duration-200
+      {:class (when input-focused? "!opacity-0")
+       :style {:pointer-events (if input-focused? "none" "auto")}}
+      (if expanded? "Hide" "Show")
+      (shui/shortcut keyboard-hint {:style :compact})])])
+
 (rum/defc pane-section
-  [label icon-items & {:keys [searching? virtual-list? render-item-fn]
-                       :or {virtual-list? true}
+  [label icon-items & {:keys [collapsible? keyboard-hint total-count searching? virtual-list? render-item-fn expanded? input-focused?]
+                       :or {virtual-list? true collapsible? false expanded? true input-focused? false}
                        :as opts}]
   (let [*el-ref (rum/use-ref nil)
-        render-fn (or render-item-fn render-item)]
+        render-fn (or render-item-fn render-item)
+        toggle-fn (when collapsible?
+                    #(swap! *section-states update label (fn [v] (if (nil? v) false (not v)))))]
     [:div.pane-section
      {:ref *el-ref
       :class (util/classnames
               [{:has-virtual-list virtual-list?
                 :searching-result searching?}])}
-     [:div.hd.px-1.pb-1.leading-none
-      [:strong.text-xs.font-medium.text-gray-07.dark:opacity-80 label]]
-     (if virtual-list?
-       (let [total (count icon-items)
-             step 9
-             rows (quot total step)
-             mods (mod total step)
-             rows (if (zero? mods) rows (inc rows))
-             items (vec icon-items)]
-         (ui/virtualized-list
-          (cond-> {:total-count rows
-                   :item-content (fn [idx]
-                                   (icons-row
-                                    (let [last? (= (dec rows) idx)
-                                          start (* idx step)
-                                          end (* (inc idx) (if (and last? (not (zero? mods))) mods step))
-                                          icons (try (subvec items start end)
-                                                     (catch js/Error e
-                                                       (js/console.error e)
-                                                       nil))]
-                                      (mapv #(render-fn % opts) icons))))}
+     ;; Use new collapsible header when collapsible? is true
+     (if collapsible?
+       (section-header {:title label
+                        :count (count icon-items)
+                        :total-count total-count
+                        :expanded? expanded?
+                        :keyboard-hint keyboard-hint
+                        :on-toggle toggle-fn
+                        :input-focused? input-focused?})
+       ;; Simple header (current style) for non-collapsible
+       [:div.hd.px-1.pb-1.leading-none
+        [:strong.text-xs.font-medium.text-gray-07.dark:opacity-80 label]])
 
-            searching?
-            (assoc :custom-scroll-parent (some-> (rum/deref *el-ref) (.closest ".bd-scroll"))))))
-       [:div.its
-        (map #(render-fn % opts) icon-items)])]))
+     ;; Content - only render if expanded or not collapsible
+     (when (or (not collapsible?) expanded?)
+       (if virtual-list?
+         (let [total (count icon-items)
+               step 9
+               rows (quot total step)
+               mods (mod total step)
+               rows (if (zero? mods) rows (inc rows))
+               items (vec icon-items)]
+           (ui/virtualized-list
+            (cond-> {:total-count rows
+                     :item-content (fn [idx]
+                                     (icons-row
+                                      (let [last? (= (dec rows) idx)
+                                            start (* idx step)
+                                            end (* (inc idx) (if (and last? (not (zero? mods))) mods step))
+                                            icons (try (subvec items start end)
+                                                       (catch js/Error e
+                                                         (js/console.error e)
+                                                         nil))]
+                                        (mapv #(render-fn % opts) icons))))}
+
+              searching?
+              (assoc :custom-scroll-parent (some-> (rum/deref *el-ref) (.closest ".bd-scroll"))))))
+         [:div.its
+          (map #(render-fn % opts) icon-items)]))]))
 
 (rum/defc emojis-cp < rum/static
   [emojis* opts]
@@ -495,9 +542,18 @@
 (defn add-used-item!
   [m]
   (let [normalized (normalize-icon m)
+        new-type (:type normalized)
+        ;; For text and avatar icons, remove all previous instances of that type
+        ;; For other icons, only remove exact duplicates
+        should-keep? (fn [item]
+                       (if (#{:text :avatar} new-type)
+                         ;; Remove any existing text/avatar icons
+                         (not= (:type item) new-type)
+                         ;; Remove exact duplicates for other types
+                         (not= normalized item)))
         s (some->> (or (get-used-items) [])
                    (take 24)
-                   (filter #(not= normalized %))
+                   (filter should-keep?)
                    (cons normalized))]
     (storage/set :ui/ls-icons-used-v2 s)))
 
@@ -515,16 +571,18 @@
       (subs initials 0 (min 8 (count initials))))))
 
 (defn- derive-avatar-initials
-  "Derive initials from a page title (max 2-3 chars for avatars)"
+  "Derive initials from a page title (max 2-3 chars for avatars, always uppercase)"
   [title]
   (when title
     (let [words (string/split (string/trim title) #"\s+")
           initials (if (> (count words) 1)
                      ;; Take first letter of first two words
-                     (str (subs (first words) 0 1)
-                          (subs (second words) 0 1))
-                     ;; Single word: take first 2-3 chars
-                     (subs (first words) 0 (min 3 (count (first words)))))]
+                     (str (string/upper-case (subs (first words) 0 1))
+                          (string/upper-case (subs (second words) 0 1)))
+                     ;; Single word: take first 2 chars and uppercase them
+                     (let [word (first words)
+                           char-count (min 2 (count word))]
+                       (string/upper-case (subs word 0 char-count))))]
       (subs initials 0 (min 3 (count initials))))))
 
 (rum/defc text-tab-cp
@@ -582,7 +640,7 @@
        [:div.text-sm.text-gray-07.dark:opacity-80
         "Enter initials or use page initials"]])))
 
-(rum/defc all-cp
+(rum/defc all-cp < rum/reactive
   [opts]
   (let [used-items (get-used-items)
         emoji-items (->> (take 32 emojis)
@@ -597,21 +655,68 @@
                                 :id (str "icon-" icon-name)
                                 :label icon-name
                                 :data {:value icon-name}})))
-        opts (assoc opts :virtual-list? false)]
+        opts (assoc opts :virtual-list? false)
+        ;; Read section states reactively
+        section-states (rum/react *section-states)]
     [:div.all-pane.pb-10
+     ;; Frequently used - collapsible
      (when (seq used-items)
-       (pane-section "Frequently used" used-items opts))
-     (pane-section (util/format "Emojis (%s)" (count emojis))
+       (pane-section "Frequently used" used-items
+                     (assoc opts
+                            :collapsible? true
+                            :keyboard-hint "alt mod 1"
+                            :expanded? (get section-states "Frequently used" true))))
+
+     ;; Emojis - collapsible
+     (pane-section "Emojis"
                    emoji-items
-                   opts)
-     (pane-section (util/format "Icons (%s)" (count (get-tabler-icons)))
+                   (assoc opts
+                          :collapsible? true
+                          :keyboard-hint "alt mod 2"
+                          :total-count (count emojis)
+                          :expanded? (get section-states "Emojis" true)))
+
+     ;; Icons - collapsible
+     (pane-section "Icons"
                    icon-items
-                   opts)]))
+                   (assoc opts
+                          :collapsible? true
+                          :keyboard-hint "alt mod 3"
+                          :total-count (count (get-tabler-icons))
+                          :expanded? (get section-states "Icons" true)))]))
 
 (rum/defc tab-observer
   [tab {:keys [reset-q!]}]
   (hooks/use-effect!
    #(reset-q!)
+   [tab])
+  nil)
+
+(rum/defc keyboard-shortcut-observer
+  [tab input-focused?]
+  (hooks/use-effect!
+   (fn []
+     ;; Register shortcuts whenever on "All" tab (works for both normal view and search results)
+     (when (= tab :all)
+       (let [handler (fn [^js e]
+                       ;; Don't trigger shortcuts when input is focused or target is an input
+                       (when (and (.-metaKey e)
+                                  (.-altKey e)
+                                  (not @input-focused?)
+                                  (not= "INPUT" (.-tagName (.-target e))))
+                         (case (.-keyCode e)
+                           49 (do ; Option+Command+1 -> Toggle "Frequently used"
+                                (swap! *section-states update "Frequently used" (fn [v] (if (nil? v) false (not v))))
+                                (util/stop e))
+                           50 (do ; Option+Command+2 -> Toggle "Emojis"
+                                (swap! *section-states update "Emojis" (fn [v] (if (nil? v) false (not v))))
+                                (util/stop e))
+                           51 (do ; Option+Command+3 -> Toggle "Icons"
+                                (swap! *section-states update "Icons" (fn [v] (if (nil? v) false (not v))))
+                                (util/stop e))
+                           nil)))]
+         (.addEventListener js/document "keydown" handler false)
+         #(.removeEventListener js/document "keydown" handler false))))
    [tab])
   nil)
 
@@ -700,16 +805,17 @@
     (shui/button {:size :sm
                   :ref *el
                   :class "color-picker"
-                  :on-click (fn [^js e] (shui/popup-show! (.-target e) content-fn {:content-props {:side-offset 6}}))
+                  :on-click (fn [^js e] (shui/popup-show! (.-target e) content-fn {:content-props {:side "bottom" :side-offset 6}}))
                   :variant :outline}
                  [:strong {:style {:color (or color "inherit")}}
                   (shui/tabler-icon "palette")])))
 
-(rum/defcs ^:large-vars/cleanup-todo icon-search <
+(rum/defcs ^:large-vars/cleanup-todo icon-search < rum/reactive
   (rum/local "" ::q)
   (rum/local nil ::result)
   (rum/local false ::select-mode?)
   (rum/local :all ::tab)
+  (rum/local false ::input-focused?)
   {:init (fn [s]
            (assoc s ::color (atom (storage/get :ls-icon-color-preset))))}
   [state {:keys [on-chosen del-btn? icon-value page-title] :as opts}]
@@ -717,11 +823,13 @@
         *result (::result state)
         *tab (::tab state)
         *color (::color state)
+        *input-focused? (::input-focused? state)
         *input-ref (rum/create-ref)
         *result-ref (rum/create-ref)
         result @*result
         normalized-icon-value (normalize-icon icon-value)
         opts (assoc opts
+                    :input-focused? @*input-focused?
                     :on-chosen (fn [e m]
                                  (let [icon-item (normalize-icon m)
                                        can-have-color? (contains? #{:icon :avatar :text} (:type icon-item))
@@ -753,9 +861,10 @@
                        (util/scroll-to (rum/deref *result-ref) 0 false))))]
     [:div.cp__emoji-icon-picker
      {:data-keep-selection true}
-     ;; header
-     [:div.hd.bg-popover
+     ;; search section
+     [:div.search-section
       (tab-observer @*tab {:reset-q! reset-q!})
+      (keyboard-shortcut-observer @*tab *input-focused?)
       (when @*select-mode?
         (select-observer *input-ref))
       [:div.search-input
@@ -763,9 +872,11 @@
        [(shui/input
          {:auto-focus true
           :ref *input-ref
-          :placeholder (util/format "Search %s items" (string/lower-case (name @*tab)))
+          :placeholder "Search emojis, icons, assets..."
           :default-value ""
-          :on-focus #(reset! *select-mode? false)
+          :on-focus #(do (reset! *select-mode? false)
+                         (reset! *input-focused? true))
+          :on-blur #(reset! *input-focused? false)
           :on-key-down (fn [^js e]
                          (case (.-keyCode e)
                             ;; esc
@@ -789,62 +900,80 @@
                             (reset! *result result))))
                       200)})]
        (when-not (string/blank? @*q)
-         [:a.x {:on-click reset-q!} (shui/tabler-icon "x" {:size 14})])]]
+         [:a.x {:on-click reset-q!} (shui/tabler-icon "x" {:size 14})])]
+
+      ;; color picker (always visible)
+      (color-picker *color (fn [c]
+                             (cond
+                               (or (= :icon (:type normalized-icon-value))
+                                   (= :text (:type normalized-icon-value)))
+                               (on-chosen nil (assoc-in normalized-icon-value [:data :color] c) true)
+
+                               (= :avatar (:type normalized-icon-value))
+                               (on-chosen nil (-> normalized-icon-value
+                                                  (assoc-in [:data :color] c)
+                                                  (assoc-in [:data :backgroundColor] c)) true))))
+
+      ;; delete button
+      (when del-btn?
+        (shui/button {:variant :outline :size :sm :data-action "del"
+                      :on-click #(on-chosen nil)}
+                     (shui/tabler-icon "trash" {:size 17})))]
+
+     ;; separator
+     (shui/separator {:class "my-0 icon-picker-separator"})
+
+     ;; tabs section
+     [:div.tabs-section
+      (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:text "Text"] [:avatar "Avatar"]]]
+        (for [[id label] tabs
+              :let [active? (= @*tab id)]]
+          [:button.tab-item
+           {:key (name id)
+            :data-active (when active? "true")
+            :on-mouse-down (fn [e]
+                             (util/stop e)
+                             (reset! *tab id))}
+           label]))]
+
      ;; body
      [:div.bd.bd-scroll
       {:ref *result-ref
        :class (or (some-> @*tab (name)) "other")}
       [:div.content-pane
        (if (seq result)
-         [:div.flex.flex-1.flex-col.gap-1.search-result
-          (let [matched (concat (:emojis result) (:icons result))]
-            (when (seq matched)
+         (let [section-states (rum/react *section-states)]
+           [:div.flex.flex-1.flex-col.search-result
+            ;; Emojis section
+            (when (seq (:emojis result))
               (pane-section
-               (util/format "Matched (%s)" (count matched))
-               matched
-               opts)))]
+               "Emojis"
+               (:emojis result)
+               (assoc opts
+                      :collapsible? true
+                      :keyboard-hint "alt mod 2"
+                      :total-count (count (:emojis result))
+                      :virtual-list? false
+                      :expanded? (get section-states "Emojis" true))))
+
+            ;; Icons section
+            (when (seq (:icons result))
+              (pane-section
+               "Icons"
+               (:icons result)
+               (assoc opts
+                      :collapsible? true
+                      :keyboard-hint "alt mod 3"
+                      :total-count (count (:icons result))
+                      :virtual-list? false
+                      :expanded? (get section-states "Icons" true))))])
          [:div.flex.flex-1.flex-col.gap-1
           (case @*tab
             :emoji (emojis-cp emojis opts)
             :icon (icons-cp (get-tabler-icons) opts)
             :text (text-tab-cp *q page-title *color opts)
             :avatar (avatar-tab-cp *q page-title *color opts)
-            (all-cp opts))])]]
-
-     ;; footer
-     [:div.ft
-      ;; tabs
-      [:<>
-       [:div.flex.flex-1.flex-row.items-center.gap-2
-        (let [tabs [[:all "All"] [:emoji "Emojis"] [:icon "Icons"] [:text "Text"] [:avatar "Avatar"]]]
-          (for [[id label] tabs
-                :let [active? (= @*tab id)]]
-            (shui/button
-             {:variant :ghost
-              :size :sm
-              :class (util/classnames [{:active active?} "tab-item"])
-              :on-mouse-down (fn [e]
-                               (util/stop e)
-                               (reset! *tab id))}
-             label)))]
-
-       (when (and (not= :emoji @*tab) (not= :text @*tab))
-         (color-picker *color (fn [c]
-                                (cond
-                                  (or (= :icon (:type normalized-icon-value))
-                                      (= :text (:type normalized-icon-value)))
-                                  (on-chosen nil (assoc-in normalized-icon-value [:data :color] c) true)
-
-                                  (= :avatar (:type normalized-icon-value))
-                                  (on-chosen nil (-> normalized-icon-value
-                                                     (assoc-in [:data :color] c)
-                                                     (assoc-in [:data :backgroundColor] c)) true)))))
-
-       ;; action buttons
-       (when del-btn?
-         (shui/button {:variant :outline :size :sm :data-action "del"
-                       :on-click #(on-chosen nil)}
-                      (shui/tabler-icon "trash" {:size 17})))]]]))
+            (all-cp opts))])]]]))
 
 (rum/defc icon-picker
   [icon-value {:keys [empty-label disabled? initial-open? del-btn? on-chosen icon-props popup-opts button-opts page-title]}]
