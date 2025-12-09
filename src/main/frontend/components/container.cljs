@@ -188,7 +188,8 @@
     {:on-click on-click-handler
      :class (when active "active")
      :href href}
-    (ui/icon (str icon) {:extension? icon-extension? :size 16})
+    [:div.icon-cp-container
+     (ui/icon (str icon) {:extension? icon-extension? :size 16})]
     [:span.flex-1 title]
     (when shortcut
       [:span.ml-1

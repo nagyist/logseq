@@ -34,24 +34,24 @@
   [backgroundColor]
   (cond
    ;; Hex color - convert to rgba with opacity
-   (and (string? backgroundColor)
-        (string/starts-with? backgroundColor "#")
-        (= (count (string/replace backgroundColor #"^#" "")) 6))
-   (let [hex (string/replace backgroundColor #"^#" "")
-         r (js/parseInt (subs hex 0 2) 16)
-         g (js/parseInt (subs hex 2 4) 16)
-         b (js/parseInt (subs hex 4 6) 16)]
-     (str "rgba(" r "," g "," b ",0.314)"))
+    (and (string? backgroundColor)
+         (string/starts-with? backgroundColor "#")
+         (= (count (string/replace backgroundColor #"^#" "")) 6))
+    (let [hex (string/replace backgroundColor #"^#" "")
+          r (js/parseInt (subs hex 0 2) 16)
+          g (js/parseInt (subs hex 2 4) 16)
+          b (js/parseInt (subs hex 4 6) 16)]
+      (str "rgba(" r "," g "," b ",0.314)"))
    ;; Already rgba - update opacity to 0.314
-   (and (string? backgroundColor)
-        (string/includes? backgroundColor "rgba"))
-   (string/replace backgroundColor #",\s*[\d.]+\)$" ",0.314)")
+    (and (string? backgroundColor)
+         (string/includes? backgroundColor "rgba"))
+    (string/replace backgroundColor #",\s*[\d.]+\)$" ",0.314)")
    ;; CSS variable - use color-mix to apply opacity
-   (and (string? backgroundColor)
-        (string/starts-with? backgroundColor "var("))
-   (str "color-mix(in srgb, " backgroundColor " 31.4%, transparent)")
+    (and (string? backgroundColor)
+         (string/starts-with? backgroundColor "var("))
+    (str "color-mix(in srgb, " backgroundColor " 31.4%, transparent)")
    ;; Default: use as-is (might be a color name or other format)
-   :else backgroundColor))
+    :else backgroundColor))
 
 (defn icon
   [icon' & [opts]]
@@ -65,23 +65,29 @@
                 [:em-emoji (merge {:id (get-in normalized [:data :value])
                                    :style {:line-height 1}}
                                   opts)]]
-               
+
                (and (map? normalized) (= :icon (:type normalized)) (get-in normalized [:data :value]))
                (ui/icon (get-in normalized [:data :value]) opts)
-               
+
                (and (map? normalized) (= :text (:type normalized)) (get-in normalized [:data :value]))
                (let [text-value (get-in normalized [:data :value])
                      display-text (if (> (count text-value) 8)
                                     (subs text-value 0 8)
                                     text-value)]
-                 [:span.text-sm.font-medium display-text])
-               
+                 [:span.ui__icon
+                  [:span.text-sm.font-medium
+                   {:style {:max-width "20px"
+                            :overflow "hidden"
+                            :text-overflow "clip"
+                            :white-space "nowrap"}}
+                   display-text]])
+
                (and (map? normalized) (= :avatar (:type normalized)) (get-in normalized [:data :value]))
                (let [avatar-value (get-in normalized [:data :value])
                      backgroundColor (or (get-in normalized [:data :backgroundColor])
-                                        (colors/variable :indigo :09))
+                                         (colors/variable :indigo :09))
                      color (or (get-in normalized [:data :color])
-                              (colors/variable :indigo :10 true))
+                               (colors/variable :indigo :10 true))
                      display-text (subs avatar-value 0 (min 3 (count avatar-value)))
                      bg-color-rgba (convert-bg-color-to-rgba backgroundColor)]
                  (shui/avatar
@@ -91,7 +97,7 @@
                             :font-size "11px"
                             :color color}}
                    display-text)))
-               
+
                ;; Legacy format support (fallback if normalization failed)
                (and (map? icon') (= :emoji (:type icon')) (:id icon'))
                [:span.ui__icon
@@ -101,14 +107,14 @@
 
                (and (map? icon') (= :tabler-icon (:type icon')) (:id icon'))
                (ui/icon (:id icon') opts)
-               
+
                :else nil)]
     (when item
       (if color?
         [:span.inline-flex.items-center.ls-icon-color-wrap
          {:style {:color (or (get-in normalized [:data :color])
-                            (some-> icon' :color)
-                            "inherit")}} item]
+                             (some-> icon' :color)
+                             "inherit")}} item]
         item))))
 
 (defn get-node-icon
@@ -214,15 +220,15 @@
                :label (or label value)
                :data {:value value}}
         :avatar (let [backgroundColor (or (:backgroundColor v)
-                                         (colors/variable :indigo :09))
-                     color (or (:color v)
-                              (colors/variable :indigo :10 true))]
-                 {:type :avatar
-                  :id (or id (str "avatar-" value))
-                  :label (or label value)
-                  :data {:value value
-                         :backgroundColor backgroundColor
-                         :color color}})
+                                          (colors/variable :indigo :09))
+                      color (or (:color v)
+                                (colors/variable :indigo :10 true))]
+                  {:type :avatar
+                   :id (or id (str "avatar-" value))
+                   :label (or label value)
+                   :data {:value value
+                          :backgroundColor backgroundColor
+                          :color color}})
         ;; Fallback: try to guess from value
         (or (guess-from-value v)
             {:type :icon
@@ -357,9 +363,9 @@
   [icon-item {:keys [on-chosen hover]}]
   (let [avatar-value (get-in icon-item [:data :value])
         backgroundColor (or (get-in icon-item [:data :backgroundColor])
-                           (colors/variable :indigo :09))
+                            (colors/variable :indigo :09))
         color (or (get-in icon-item [:data :color])
-                 (colors/variable :indigo :10 true))
+                  (colors/variable :indigo :10 true))
         display-text (subs avatar-value 0 (min 3 (count avatar-value)))
         bg-color-rgba (convert-bg-color-to-rgba backgroundColor)]
     [:button.transition-opacity
@@ -369,15 +375,15 @@
        :class "p-0 border-0 bg-transparent cursor-pointer"
        :on-click (fn [e]
                    (on-chosen e {:type "avatar"
-                                :value avatar-value
-                                :backgroundColor backgroundColor
-                                :color color}))}
+                                 :value avatar-value
+                                 :backgroundColor backgroundColor
+                                 :color color}))}
        (not (nil? hover))
        (assoc :on-mouse-over #(reset! hover {:type :avatar
-                                            :value avatar-value
-                                            :backgroundColor backgroundColor
-                                            :color color})
-             :on-mouse-out #()))
+                                             :value avatar-value
+                                             :backgroundColor backgroundColor
+                                             :color color})
+              :on-mouse-out #()))
      (shui/avatar
       {:class "w-5 h-5"}
       (shui/avatar-fallback

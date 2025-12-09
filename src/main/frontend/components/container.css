@@ -95,6 +95,10 @@
   .sidebar-navigations {
     @apply gap-0.5;
 
+    a.item {
+      gap: 0.5rem;
+    }
+
     a {
       .keyboard-shortcut {
         @apply opacity-0 invisible;
@@ -112,15 +116,22 @@
   }
 
   .page-icon {
-    @apply flex items-center text-center align-baseline leading-none;
+    @apply flex items-center leading-none mr-2;
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .icon-cp-container {
+    width: 20px;
   }
 
   .ui__icon {
-    @apply relative flex justify-center w-[16px] text-base mr-2 opacity-70;
+    @apply relative flex justify-center items-center w-full text-base opacity-70;
   }
 
   a.item {
-    @apply flex items-center pl-1.5 pr-0.5 h-8 select-none;
+    @apply flex items-center pl-2 pr-0.5 h-8 select-none;
 
     .graph-icon {
       @apply ml-[3px] mr-[11px];
@@ -244,13 +255,6 @@
         }
       }
 
-      .icon-cp-container {
-        @apply pr-1;
-
-        > .ui__icon {
-          @apply mr-0;
-        }
-      }
     }
 
     .hd .more {
