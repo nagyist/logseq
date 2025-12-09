@@ -7,6 +7,8 @@
             [frontend.colors :as colors]
             [frontend.config :as config]
             [frontend.db :as db]
+            [frontend.db-mixins :as db-mixins]
+            [frontend.db.model :as model]
             [frontend.handler.property.util :as pu]
             [frontend.search :as search]
             [frontend.state :as state]
@@ -25,6 +27,31 @@
 (defonce emojis (vals (bean/->clj (gobj/get emoji-data "emojis"))))
 
 (declare normalize-icon)
+
+(defn- convert-bg-color-to-rgba
+  "Convert background color to rgba format with opacity ~0.314.
+   Handles hex colors, CSS variables, and rgba colors."
+  [backgroundColor]
+  (cond
+   ;; Hex color - convert to rgba with opacity
+   (and (string? backgroundColor)
+        (string/starts-with? backgroundColor "#")
+        (= (count (string/replace backgroundColor #"^#" "")) 6))
+   (let [hex (string/replace backgroundColor #"^#" "")
+         r (js/parseInt (subs hex 0 2) 16)
+         g (js/parseInt (subs hex 2 4) 16)
+         b (js/parseInt (subs hex 4 6) 16)]
+     (str "rgba(" r "," g "," b ",0.314)"))
+   ;; Already rgba - update opacity to 0.314
+   (and (string? backgroundColor)
+        (string/includes? backgroundColor "rgba"))
+   (string/replace backgroundColor #",\s*[\d.]+\)$" ",0.314)")
+   ;; CSS variable - use color-mix to apply opacity
+   (and (string? backgroundColor)
+        (string/starts-with? backgroundColor "var("))
+   (str "color-mix(in srgb, " backgroundColor " 31.4%, transparent)")
+   ;; Default: use as-is (might be a color name or other format)
+   :else backgroundColor))
 
 (defn icon
   [icon' & [opts]]
@@ -55,13 +82,15 @@
                                         (colors/variable :indigo :09))
                      color (or (get-in normalized [:data :color])
                               (colors/variable :indigo :10 true))
-                     display-text (subs avatar-value 0 (min 3 (count avatar-value)))]
-                 [:span.inline-flex.items-center.justify-center.w-9.h-9.rounded-full.text-sm.font-medium
-                  {:style {:backgroundColor backgroundColor
-                           :color color
-                           :min-width "2.25rem"
-                           :min-height "2.25rem"}}
-                  display-text])
+                     display-text (subs avatar-value 0 (min 3 (count avatar-value)))
+                     bg-color-rgba (convert-bg-color-to-rgba backgroundColor)]
+                 (shui/avatar
+                  {:class "w-5 h-5"}
+                  (shui/avatar-fallback
+                   {:style {:background-color bg-color-rgba
+                            :font-size "11px"
+                            :color color}}
+                   display-text)))
                
                ;; Legacy format support (fallback if normalization failed)
                (and (map? icon') (= :emoji (:type icon')) (:id icon'))
@@ -103,16 +132,21 @@
             :else
             "letter-n")))))
 
-(defn get-node-icon-cp
+(rum/defc get-node-icon-cp < rum/reactive db-mixins/query
   [node-entity opts]
-  (let [opts' (merge {:size 14} opts)
+  (let [;; Get fresh entity using db/sub-block to make it reactive to property changes
+        ;; Only subscribe if we have a db-id (optimization: avoid unnecessary subscriptions)
+        fresh-entity (when-let [db-id (:db/id node-entity)]
+                       (or (model/sub-block db-id) node-entity))
+        entity (or fresh-entity node-entity)
+        opts' (merge {:size 14} opts)
         node-icon (cond
                     (:own-icon? opts)
-                    (get node-entity (pu/get-pid :logseq.property/icon))
+                    (get entity (pu/get-pid :logseq.property/icon))
                     (:link? opts)
                     "arrow-narrow-right"
                     :else
-                    (get-node-icon node-entity))]
+                    (get-node-icon entity))]
     (when-not (or (string/blank? node-icon) (and (contains? #{"letter-n" "file"} node-icon) (:not-text-or-page? opts)))
       [:div.icon-cp-container.flex.items-center
        (merge {:style {:color (or (:color node-icon) "inherit")}}
@@ -326,25 +360,31 @@
                            (colors/variable :indigo :09))
         color (or (get-in icon-item [:data :color])
                  (colors/variable :indigo :10 true))
-        display-text (subs avatar-value 0 (min 3 (count avatar-value)))]
-    [:button.w-9.h-9.rounded-full.transition-opacity.text-sm.font-medium.flex.items-center.justify-center
+        display-text (subs avatar-value 0 (min 3 (count avatar-value)))
+        bg-color-rgba (convert-bg-color-to-rgba backgroundColor)]
+    [:button.transition-opacity
      (cond->
       {:tabIndex "0"
        :title avatar-value
-       :style {:backgroundColor backgroundColor
-               :color color}
+       :class "p-0 border-0 bg-transparent cursor-pointer"
        :on-click (fn [e]
                    (on-chosen e {:type "avatar"
-                                 :value avatar-value
-                                 :backgroundColor backgroundColor
-                                 :color color}))}
+                                :value avatar-value
+                                :backgroundColor backgroundColor
+                                :color color}))}
        (not (nil? hover))
        (assoc :on-mouse-over #(reset! hover {:type :avatar
-                                             :value avatar-value
-                                             :backgroundColor backgroundColor
-                                             :color color})
-              :on-mouse-out #()))
-     display-text]))
+                                            :value avatar-value
+                                            :backgroundColor backgroundColor
+                                            :color color})
+             :on-mouse-out #()))
+     (shui/avatar
+      {:class "w-5 h-5"}
+      (shui/avatar-fallback
+       {:style {:background-color bg-color-rgba
+                :font-size "11px"
+                :color color}}
+       display-text))]))
 
 (defn render-item
   "Render an icon-item based on its type"

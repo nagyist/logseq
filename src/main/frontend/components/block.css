@@ -1052,6 +1052,16 @@ html.is-mac {
   height: 38px;
 }
 
+/* Scale up avatars in page title context */
+.ls-page-title .ls-page-icon .ui__avatar {
+  width: 2rem; /* w-8 = 32px */
+  height: 2rem; /* h-8 = 32px */
+}
+
+.ls-page-title .ls-page-icon .ui__avatar span {
+  font-size: 14px; /* Slightly larger font for larger avatar */
+}
+
 .ls-page-title .positioned-properties svg, .page-ref svg {
   width: 16px;
   height: 16px;
