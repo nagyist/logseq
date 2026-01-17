@@ -86,7 +86,7 @@
 (defn- grep-many
   "Git greps a coll of patterns for given paths. Returns result from process/shell"
   [patterns paths]
-  (apply shell {:out :string :continue true}
+  (apply shell {:out :string :continue true :shutdown nil}
          "git grep -E" (str "(" (string/join "|" patterns) ")")
          paths))
 
